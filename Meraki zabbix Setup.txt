@@ -1,0 +1,519 @@
+Zabbix Monitoring setup for Meraki.
+
+
+Get API from the client : 
+
+API_KEY = "d53b1e2ec5e9a5935682ba4cdf99d24b32f09bc9"
+BASE_URL = "https://api.meraki.com/api/v1"
+
+
+write 2 custom script.
+
+meraki_api.py - optional
+get_meraki_details.py - main
+
+/usr/lib/zabbix/externalscripts
+[root@ZABBIX6POLARAPPWEB externalscripts]# ls -lttrh
+total 32K
+-rw-r--r-- 1 zabbix zabbix   21 Aug 28 16:41 meraki_api_key.txt
+-rw-r----- 1 root   root   2.0K Sep  5 13:30 meraki.py
+-rw-r--r-- 1 root   root    13K Sep  5 14:09 output.json
+-rwxr-xr-x 1 zabbix zabbix 2.1K Sep  6 11:28 meraki_api.py
+-rwxr-xr-x 1 root   root   1.3K Sep  6 11:49 get_meraki_details.py
+[root@ZABBIX6POLARAPPWEB externalscripts]# cat meraki_api.py
+
+
+[root@ZABBIX6POLARAPPWEB externalscripts]# cat meraki_api.py
+#!/usr/bin/env python3
+import json
+import sys
+from urllib import request, error
+
+API_KEY = "d53b1e2ec5e9a5935682ba4cdf99d24b32f09bc9"
+BASE_URL = "https://api.meraki.com/api/v1"
+
+def make_request(url):
+    headers = {
+        "X-Cisco-Meraki-API-Key": API_KEY,
+    }
+    req = request.Request(url, headers=headers)
+    try:
+        with request.urlopen(req) as response:
+            return json.loads(response.read().decode())
+    except error.HTTPError as e:
+        print(f"HTTP Error {e.code}: {e.reason}")
+        return None
+    except error.URLError as e:
+        print(f"URL Error: {e.reason}")
+        return None
+
+def get_devices(network_id):
+    url = f"{BASE_URL}/networks/{network_id}/devices"
+    return make_request(url)
+
+def discover_devices(network_id):
+    devices = get_devices(network_id)
+    if not devices:
+        print("Error: Could not retrieve devices")
+        return
+
+    devices_data = []
+    for device in devices:
+        devices_data.append({
+            "{#HOST.NAME}": device.get("name", "Unknown"),
+            "{#HOST.IP}": device.get("lanIp", "Unknown"),
+            "{#DEVICE.SERIAL}": device.get("serial", "Unknown"),
+            "{#DEVICE.MODEL}": device.get("model", "Unknown"),
+            "{#DEVICE.MAC}": device.get("mac", "Unknown"),
+            "{#DEVICE.NETWORKID}": network_id
+        })
+
+    discovery_data = {
+        "data": devices_data
+    }
+    print(json.dumps(discovery_data, indent=4))
+
+def raw_devices(network_id):
+    devices = get_devices(network_id)
+    if not devices:
+        print("Error: Could not retrieve devices")
+        return
+
+    print(json.dumps(devices, indent=4))
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python3 meraki_api.py <command> <network_id>")
+        sys.exit(1)
+
+    command = sys.argv[1]
+    network_id = sys.argv[2]
+
+    if command == "get_devices":
+        discover_devices(network_id)
+    elif command == "raw_devices":
+        raw_devices(network_id)
+    else:
+        print(f"Unknown command: {command}")
+        sys.exit(1)
+
+Execute : 
+
+[root@ZABBIX6POLARAPPWEB externalscripts]#
+
+[root@ZABBIX6POLARAPPWEB externalscripts]# sudo -u zabbix /usr/lib/zabbix/externalscripts/meraki_api.py get_devices L_751538187817454817
+{
+    "data": [
+        {
+            "{#HOST.NAME}": "10- MS_VijayDubey",
+            "{#HOST.IP}": "172.18.250.162",
+            "{#DEVICE.SERIAL}": "Q3AP-778S-SHJU",
+            "{#DEVICE.MODEL}": "MR57",
+            "{#DEVICE.MAC}": "e4:55:a8:75:13:7b",
+            "{#DEVICE.NETWORKID}": "L_751538187817454817"
+        },
+        {
+            "{#HOST.NAME}": "10-Hyd RO",
+            "{#HOST.IP}": "172.18.250.164",
+            "{#DEVICE.SERIAL}": "Q3AP-R9NF-M8J2",
+            "{#DEVICE.MODEL}": "MR57",
+            "{#DEVICE.MAC}": "e4:55:a8:75:16:ab",
+            "{#DEVICE.NETWORKID}": "L_751538187817454817"
+        },
+
+
+SCRIPT 2 Main : 
+
+[root@ZABBIX6POLARAPPWEB externalscripts]# cat get_meraki_details.py
+import requests
+import sys
+
+API_KEY = "d53b1e2ec5e9a5935682ba4cdf99d24b32f09bc9"
+BASE_URL = "https://api.meraki.com/api/v1"
+
+def get_organizations():
+    url = f"{BASE_URL}/organizations"
+    headers = {
+        "X-Cisco-Meraki-API-Key": API_KEY,
+        "Content-Type": "application/json"
+    }
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+def get_devices(org_id):
+    url = f"{BASE_URL}/organizations/{org_id}/devices"
+    headers = {
+        "X-Cisco-Meraki-API-Key": API_KEY,
+        "Content-Type": "application/json"
+    }
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+def main():
+    try:
+        orgs = get_organizations()
+        print("Organizations:")
+        for org in orgs:
+            print(f"ID: {org['id']}, Name: {org['name']}")
+            devices = get_devices(org['id'])
+            print("Devices:")
+            for device in devices:
+                print(f"  Serial: {device['serial']}, Model: {device['model']}, Name: {device['name']}")
+            print()
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+
+[root@ZABBIX6POLARAPPWEB externalscripts]#
+
+Execute : 
+
+[root@ZABBIX6POLARAPPWEB externalscripts]# python3 ./get_meraki_details.py
+Organizations:
+ID: 994347, Name: Bharat Financial Inclusion Limited
+Devices:
+  Serial: Q2DW-KBNK-77UW, Model: MS425-32, Name: BFIL-CORE1
+  Serial: Q2DW-NGUT-FE79, Model: MS425-32, Name: BFIL-CORE2
+  Serial: Q2HW-MD2W-NCFP, Model: MS225-48, Name: BFIL-10FSER-MERAKI-SW3
+  Serial: Q2HW-MDXE-56DM, Model: MS225-48, Name: BFIL-10F-HUB-MERAKI-SW1
+  Serial: Q2HW-ME52-WWBU, Model: MS225-48, Name: BFIL-11FSER-MERAKI-SW2
+  Serial: Q2KD-2KWK-65R5, Model: MR42, Name: AP-12 A-Wing
+  Serial: Q2KD-2LED-3HDC, Model: MR42, Name: AP-18 C-Wing
+  Serial: Q2KD-3ECH-AD3W, Model: MR42, Name: AP-10 A-Wing
+  Serial: Q2KD-4PLH-KVTE, Model: MR42, Name: AP-13 B-Wing
+  Serial: Q2KD-5EBV-GNSG, Model: MR42, Name: AP-25 A-Wing
+  Serial: Q2KD-62E4-X3W7, Model: MR42, Name: AP-35 B-Wing
+  Serial: Q2KD-8MMZ-FZ7Q, Model: MR42, Name: AP-11 A-Wing
+  Serial: Q2KD-A27J-VKZZ, Model: MR42, Name: AP-34 B-Wing
+  Serial: Q2KD-AVLV-A3MK, Model: MR42, Name: AP-33 B-Wing
+  Serial: Q2KD-AVVB-3SUA, Model: MR42, Name: AP-24 A-Wing
+  Serial: Q2KD-CA7W-DGNX, Model: MR42, Name: AP-36 B-Wing
+  Serial: Q2KD-CLPL-3GDR, Model: MR42, Name: AP-28 A-Wing
+  Serial: Q2KD-DMPK-XWTX, Model: MR42, Name: AP-23 A-Wing Boardroom
+  Serial: Q2KD-DN7M-B5TX, Model: MR42, Name: AP-06 A-Wing
+  Serial: Q2KD-E2DM-87YX, Model: MR42, Name: AP-04 A-Wing
+  Serial: Q2KD-FPSX-C8DV, Model: MR42, Name: AP-17 B-Wing
+  Serial: Q2KD-G7HW-TLGC, Model: MR42, Name: AP-07 A-Wing
+  Serial: Q2KD-GSU6-W7TE, Model: MR42, Name: AP-27 A-Wing
+  Serial: Q2KD-K9GS-EARV, Model: MR42, Name: AP-09 A-Wing
+  Serial: Q2KD-L7MW-9WCT, Model: MR42, Name: AP-31 B-Wing
+  Serial: Q2KD-LQZ2-KGVJ, Model: MR42, Name: AP-16 B-Wing
+  Serial: Q2KD-M5TY-TNLP, Model: MR42, Name: AP-15 B-Wing
+  Serial: Q2KD-MNNF-CRHA, Model: MR42, Name: AP-08 A-Wing
+  Serial: Q2KD-MP9F-ZTK2, Model: MR42, Name: AP-37 A-Wing Training Hall
+  Serial: Q2KD-NWVP-48X6, Model: MR42, Name: AP-20 C-Wing
+  Serial: Q2KD-NYBR-3W54, Model: MR42, Name: AP-14 B-Wing
+  Serial: Q2KD-P3BU-74U9, Model: MR42, Name: AP-19 B-Wing
+  Serial: Q2KD-PHQ2-YCM5, Model: MR42, Name: AP-21 B-Wing
+  Serial: Q2KD-PPAK-9UCD, Model: MR42, Name: AP-03 A-Wing
+  Serial: Q2KD-QLTT-CR8J, Model: MR42, Name: AP-26 A-Wing
+  Serial: Q2KD-QY5J-FSNC, Model: MR42, Name: AP-05 A-Wing
+  Serial: Q2KD-RU3C-8DGQ, Model: MR42, Name: AP-01 A-Wing
+  Serial: Q2KD-T3RM-3Y8J, Model: MR42, Name: AP-02 A-Wing
+  Serial: Q2KD-V62M-HV83, Model: MR42, Name: AP-22 B-Wing
+  Serial: Q2KD-VNRM-TVW4, Model: MR42, Name: AP-32 B-Wing
+  Serial: Q2KW-RESJ-JFAT, Model: MS225-48FP, Name: BFIL-11FSER-MR-POESW1
+  Serial: Q2KW-RFSM-M38M, Model: MS225-48FP, Name: BFIL-11FHUB-MERAKI-SW4
+  Serial: Q2KW-UPPQ-NJ37, Model: MS225-48FP, Name: BFIL-10FSER-MR-POESW2
+  Serial: Q3AP-34T9-GADY, Model: MR57, Name: 10-WashRoom-Line
+  Serial: Q3AP-778S-SHJU, Model: MR57, Name: 10- MS_VijayDubey
+  Serial: Q3AP-8P9M-EBG7, Model: MR57, Name: 11-IT-Support
+  Serial: Q3AP-8TDU-PE6U, Model: MR57, Name: 10-Board-room-outside
+  Serial: Q3AP-BFYJ-BPHR, Model: MR57, Name: 10-Admin-Server-room-Side
+  Serial: Q3AP-BYJF-UP9W, Model: MR57, Name: 10F- HUB Room Passage
+  Serial: Q3AP-DWXM-KRAJ, Model: MR57, Name: 10-Recpetion Backside
+  Serial: Q3AP-FAY5-WYXU, Model: MR57, Name: 10-Traning
+  Serial: Q3AP-FE8L-MPUV, Model: MR57, Name: Store
+  Serial: Q3AP-G4VT-ZFDQ, Model: MR57, Name: 10F Living Area
+  Serial: Q3AP-GRU5-TMJS, Model: MR57, Name: 10-MI-Team
+  Serial: Q3AP-LV6N-ZDAW, Model: MR57, Name: 10-Board Room
+  Serial: Q3AP-MQ93-V3CY, Model: MR57, Name: 10-RLMS
+  Serial: Q3AP-PH28-LLPA, Model: MR57, Name: 10-JS Cabin
+  Serial: Q3AP-PWSL-QRYK, Model: MR57, Name: 10-IA
+  Serial: Q3AP-PZDH-NP8Z, Model: MR57, Name: AccessPoint-40
+  Serial: Q3AP-QE2U-R3PN, Model: MR57, Name: 10-Acounts
+  Serial: Q3AP-R9NF-M8J2, Model: MR57, Name: 10-Hyd RO
+  Serial: Q3AP-SDCN-X3PK, Model: MR57, Name: 10-Reception
+  Serial: Q3AP-UAA6-RWVT, Model: MR57, Name: 10-HR
+  Serial: Q3AP-ULTH-WGNZ, Model: MR57, Name: 10-MS-Vikas
+  Serial: Q3AP-VZY8-VJUV, Model: MR57, Name: 10-RLMS-Ashish-Pipaliya
+  Serial: Q3AP-Y5AG-TFXZ, Model: MR57, Name: 10-Admin
+  Serial: Q3AP-Z766-4W84, Model: MR57, Name: 11F IT SUPPORT 2
+  Serial: Q3AP-Z7WV-DDHX, Model: MR57, Name: 11th_Tranig Room
+  Serial: Q5KD-2R2V-YNPZ, Model: C9300-24UX, Name: BFIL-10F-SERVER-POESW1
+  Serial: Q5KD-SSD9-LHKG, Model: C9300-24UX, Name: BFIL-10F-HUB-POESW2
+
+ID: 1531514, Name: Bharat Financial Inclusion Ltd
+Devices:
+
+[root@ZABBIX6POLARAPPWEB externalscripts]#
+
+
+NOTE : scrips are only for reference to get the required details 
+
+Name, Serial, Organization ID... etc...
+
+
+Go to Zabbix : 
+
+Create a Host in Zabbix 
+
+with device ip shared by the client - 172.26.105.20
+
+configure it in Zabbix - agent 10050
+
+Macros - 
+
+{$MERAKI.API.KEY} : d53b1e2ec5e9a5935682ba4cdf99d24b32f09bc9
+
+{$MERAKI.NETWORK.ID} : L_751538187817454817
+
+Main Template to attach : 
+
+Cisco Meraki dashboard by HTTP  - it has 2 discovery rule - 
+
+1 for devices - 1 Host prototype - which will discover all devices as hosts.
+1 for organizations. 1 Host prototype
+
+Optional Templates 
+
+
+Cisco Meraki device by HTTP
+Cisco Meraki organization by HTTP
+
+Main Part. - items wont work because of the java script in the get data items. - it will throw the error for uplinks.
+
+Modify template item - Meraki: Get device data
+
+modify the script that handle the case where 'uplinks' might not be defined
+
+var params = JSON.parse(value);
+var request = new HttpRequest();
+request.addHeader('X-Cisco-Meraki-API-Key:' + params.token);
+request.addHeader('User-Agent: ZabbixServer/1.0 Zabbix');
+var response,
+    error_msg = '',
+    device = [],
+    uplinksLL = [],
+    uplinks = [];  // Initialize uplinks as an empty array
+
+function getHttpData(url) {
+    response = request.get(url);
+    Zabbix.log(4, '[ Meraki API ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+    if (response !== null) {
+        try {
+            response = JSON.parse(response);
+        }
+        catch (error) {
+            throw 'Failed to parse response received from Meraki API. Check debug log for more information.';
+        }
+    }
+    if (request.getStatus() !== 200) {
+        if (response.errors) {
+            throw response.errors.join(', ');
+        } else {
+            throw 'Failed to receive data: invalid response status code.';
+        }
+    }
+    if (typeof (response) !== 'object' || response === null) {
+        throw 'Cannot process response data: received data is not an object.';
+    }
+    return response;
+};
+
+try {
+    if (params.token === '{' + '$MERAKI.TOKEN}') {
+        throw 'Please change {' + '$MERAKI.TOKEN} macro with the proper value.';
+    }
+    if (params.url.indexOf('http://') === -1 && params.url.indexOf('https://') === -1) {
+        params.url = 'https://' + params.url;
+    }
+    if (!params.url.endsWith('/')) {
+        params.url += '/';
+    }
+    if (typeof params.httpproxy !==  'undefined' && params.httpproxy !== '') {
+        request.setProxy(params.httpproxy);
+    }
+    device = getHttpData(params.url + 'organizations/' + encodeURIComponent(params.organizationId) + '/devices/statuses?serials[]=' + encodeURIComponent(params.serial));
+    uplinksLL = getHttpData(params.url + 'organizations/' + encodeURIComponent(params.organizationId) + '/devices/uplinksLossAndLatency?timespan=60');
+    if (uplinksLL.length > 0) {
+        uplinks = uplinksLL.filter(function(device) {
+            return device.serial == params.serial;
+        });
+    }
+} catch (error) {
+    error_msg = error;
+}
+
+return JSON.stringify({
+    'device': device,
+    'uplinksLL': uplinks,
+    'error': error_msg.toString()
+});
+
+
+Optional scripts - 
+
+To get network ID  and device  details :
+
+Cd /usr/lib/zabbix/
+
+[root@ZABBIX6POLARAPPWEB externalscripts]# cat meraki_api.py
+#!/usr/bin/env python3
+
+import sys
+import json
+from urllib import request, error
+
+# Hardcoded API Key
+API_KEY = "d53b1e2ec5e9a5935682ba4cdf99d24b32f09bc9"
+
+BASE_URL = "https://api.meraki.com/api/v1"
+
+def make_request(url):
+    headers = {
+        "X-Cisco-Meraki-API-Key": API_KEY,
+    }
+    req = request.Request(url, headers=headers)
+    try:
+        with request.urlopen(req) as response:
+            return json.loads(response.read().decode())
+    except error.HTTPError as e:
+        print(f"HTTP Error {e.code}: {e.reason}")
+        return None
+    except error.URLError as e:
+        print(f"URL Error: {e.reason}")
+        return None
+
+def get_organization_id():
+    url = f"{BASE_URL}/organizations"
+    organizations = make_request(url)
+    if organizations and len(organizations) > 0:
+        return organizations[0]["id"]
+    return None
+
+def get_networks(org_id):
+    url = f"{BASE_URL}/organizations/{org_id}/networks"
+    return make_request(url)
+
+def get_devices(network_id):
+    url = f"{BASE_URL}/networks/{network_id}/devices"
+    return make_request(url)
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python meraki_api.py <command> [args]")
+        sys.exit(1)
+
+    command = sys.argv[1]
+
+    if command == "get_networks":
+        org_id = get_organization_id()
+        if org_id:
+            networks = get_networks(org_id)
+            if networks:
+                print(json.dumps(networks, indent=4))
+            else:
+                print("Error: Could not retrieve networks")
+        else:
+            print("Error: Could not retrieve organization ID")
+    elif command == "get_devices":
+        if len(sys.argv) < 3:
+            print("Usage: python meraki_api.py get_devices <network_id>")
+            sys.exit(1)
+        network_id = sys.argv[2]
+        devices = get_devices(network_id)
+        if devices:
+            print(json.dumps(devices, indent=4))
+        else:
+            print("Error: Could not retrieve devices")
+    else:
+        print(f"Unknown command: {command}")
+
+if __name__ == "__main__":
+    main()
+
+
+
+Test : 
+
+[root@ZABBIX6POLARAPPWEB externalscripts]# ./meraki_api.py get_networks
+[
+    {
+        "id": "L_751538187817454817",
+        "organizationId": "994347",
+        "name": "BFIL_HYD",
+        "productTypes": [
+            "appliance",
+            "cellularGateway",
+            "sensor",
+            "switch",
+            "wireless"
+        ],
+        "timeZone": "Asia/Kolkata",
+        "tags": [],
+        "enrollmentString": null,
+        "url": "https://n335.meraki.com/BFIL_HYD-cellula/n/VZiNWdpf/manage/usage/list",
+        "notes": "",
+        "isBoundToConfigTemplate": false,
+        "isVirtual": false
+    }
+]
+[root@ZABBIX6POLARAPPWEB externalscripts]# ./meraki_api.py get_devices L_751538187817454817
+[
+    {
+        "lat": 37.4180951010362,
+        "lng": -122.098531723022,
+        "address": "",
+        "serial": "Q3AP-778S-SHJU",
+        "mac": "e4:55:a8:75:13:7b",
+        "lanIp": "172.18.250.162",
+        "tags": [
+            "ise"
+        ],
+        "url": "https://n335.meraki.com/BFIL_HYD-wireles/n/zYAHcbpf/manage/nodes/new_list/251056549598075",
+        "networkId": "L_751538187817454817",
+        "name": "10- MS_VijayDubey",
+        "details": [],
+        "model": "MR57",
+        "firmware": "wireless-30-6",
+        "floorPlanId": null
+    },
+    {
+        "lat": 17.42843,
+        "lng": 78.38021,
+        "address": "10th and 11th floors, Hetero Wing, Raheja Commerzone, Raidurg, Hyderabad, Telangana 500008",
+        "serial": "Q3AP-R9NF-M8J2",
+        "mac": "e4:55:a8:75:16:ab",
+        "lanIp": "172.18.250.164",
+        "tags": [
+            "ise"
+        ],
+        "url": "https://n335.meraki.com/BFIL_HYD-wireles/n/zYAHcbpf/manage/nodes/new_list/251056549598891",
+        "networkId": "L_751538187817454817",
+        "name": "10-Hyd RO",
+        "details": [],
+        "model": "MR57",
+        "firmware": "wireless-30-6",
+        "floorPlanId": null
+    },
+
+
+
+
+Error :
+
+/usr/lib/zabbix/externalscripts/meraki_api.py: [2] No such file or directory
+
+
+
+
+
+
+
+
